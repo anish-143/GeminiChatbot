@@ -1,0 +1,23 @@
+services:
+  - type: web_service
+    name: gemini-chatbot-backend
+    env: node
+    plan: free
+    root: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        value: "https://your-frontend-url.onrender.com"
+      - key: PORT
+        value: "10000"
+  - type: static_site
+    name: gemini-chatbot-frontend
+    root: frontend
+    buildCommand: npm install && npm run build
+    publishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: "https://your-backend-url.onrender.com/api"
