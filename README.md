@@ -4,6 +4,10 @@ A full-stack, modern web application for chatting with Google's Gemini AI. Featu
 
 ![Gemini Chatbot](./screenshot.png)
 
+## 🌐 Live Demo
+
+[Click Here to Open Gemini Chatbot](https://gemini-chatbot-frontend-wp7k.onrender.com)
+
 ## ✨ Features
 
 ### Core Features
