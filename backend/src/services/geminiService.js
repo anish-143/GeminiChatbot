@@ -3,24 +3,101 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
-function createGeminiModel() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "GEMINI_API_KEY is not set. Please add it to backend/.env or set it in your environment."
-    );
-  }
+const apiKey = process.env.GEMINI_API_KEY;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  return genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+if (!apiKey) {
+  throw new Error("GEMINI_API_KEY is missing.");
+}
+
+const genAI = new GoogleGenerativeAI(apiKey);
+
+/**
+ * Available fallback models
+ */
+const MODEL_FALLBACKS = [
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash-latest",
+];
+
+/**
+ * Delay helper
+ */
+function sleep(ms) {
+  return new Promise((resolve) =>
+    setTimeout(resolve, ms)
+  );
 }
 
 /**
- * Send a message to Gemini with context
- * @param {string} userMessage - User's text message
- * @param {Array} conversationHistory - Array of previous messages
- * @param {string} documentContent - Optional extracted document text
- * @param {Object} imageData - Optional image data { mimeType, data }
+ * Try generating with fallback models
+ */
+async function generateWithFallback(
+  messages,
+  content
+) {
+  let lastError = null;
+
+  for (const modelName of MODEL_FALLBACKS) {
+    try {
+      console.log(`Using model: ${modelName}`);
+
+      const model =
+        genAI.getGenerativeModel({
+          model: modelName,
+        });
+
+      const chat = model.startChat({
+        history: messages.slice(0, -1),
+      });
+
+      /**
+       * Retry per model
+       */
+      for (let retry = 0; retry < 3; retry++) {
+        try {
+          const result =
+            await chat.sendMessage(content);
+
+          return result.response.text();
+        } catch (error) {
+          lastError = error;
+
+          console.error(
+            `Retry ${retry + 1} failed for ${modelName}`,
+            error.message
+          );
+
+          const retryable =
+            error.message.includes("503") ||
+            error.message.includes("429") ||
+            error.message.includes("overloaded") ||
+            error.message.includes("high demand");
+
+          if (
+            retryable &&
+            retry < 2
+          ) {
+            await sleep(2000 * (retry + 1));
+            continue;
+          }
+
+          /**
+           * Try next fallback model
+           */
+          break;
+        }
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * Main Gemini function
  */
 export async function sendMessageToGemini(
   userMessage,
@@ -29,17 +106,23 @@ export async function sendMessageToGemini(
   imageData = null
 ) {
   try {
-    // Build the content array for multimodal support
     const content = [];
 
-    // Add document context if available
+    /**
+     * Document context
+     */
     if (documentContent) {
       content.push({
-        text: `You are a helpful AI assistant. The user has uploaded a document. Here is its content:\n\n${documentContent}\n\n`,
+        text: `You are a helpful AI assistant.
+
+Document content:
+${documentContent}`,
       });
     }
 
-    // Add image if provided
+    /**
+     * Image support
+     */
     if (imageData) {
       content.push({
         inlineData: {
@@ -49,59 +132,84 @@ export async function sendMessageToGemini(
       });
     }
 
-    // Add user message
+    /**
+     * User message
+     */
     content.push({
       text: userMessage,
     });
 
-    // Prepare messages for context
+    /**
+     * Conversation history
+     */
     const messages = [];
 
-    // Add conversation history
     for (const msg of conversationHistory) {
-      if (msg.role === "user") {
-        messages.push({
-          role: "user",
-          parts: [{ text: msg.content }],
-        });
-      } else {
-        messages.push({
-          role: "model",
-          parts: [{ text: msg.content }],
-        });
-      }
+      messages.push({
+        role:
+          msg.role === "user"
+            ? "user"
+            : "model",
+        parts: [
+          {
+            text: msg.content,
+          },
+        ],
+      });
     }
 
-    // Add current user message
     messages.push({
       role: "user",
       parts: content,
     });
 
-    const model = createGeminiModel();
-
-    // Start a chat session
-    const chat = model.startChat({
-      history: messages.slice(0, -1), // All messages except the last one
-    });
-
-    // Send the current message and get response
-    const result = await chat.sendMessage(content);
-    const response = await result.response;
-    const text = response.text();
+    /**
+     * Generate response
+     */
+    const text =
+      await generateWithFallback(
+        messages,
+        content
+      );
 
     return text;
   } catch (error) {
-    console.error("Error calling Gemini API:", error);
-    throw new Error(`Failed to get response from Gemini: ${error.message}`);
+    console.error(
+      "Gemini API Error:",
+      error
+    );
+
+    if (error.message.includes("429")) {
+      throw new Error(
+        "AI quota exceeded. Please try again later."
+      );
+    }
+
+    if (error.message.includes("503")) {
+      throw new Error(
+        "Gemini servers are busy. Please retry in a few seconds."
+      );
+    }
+
+    throw new Error(
+      "Failed to generate AI response."
+    );
   }
 }
 
 /**
- * Simple text-only chat
+ * Simple text chat
  */
-export async function sendSimpleMessage(userMessage, conversationHistory = []) {
-  return sendMessageToGemini(userMessage, conversationHistory, null, null);
+export async function sendSimpleMessage(
+  userMessage,
+  conversationHistory = []
+) {
+  return sendMessageToGemini(
+    userMessage,
+    conversationHistory,
+    null,
+    null
+  );
 }
 
 export default {
