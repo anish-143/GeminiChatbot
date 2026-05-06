@@ -2,8 +2,6 @@
 
 A full-stack, modern web application for chatting with Google's Gemini AI. Features text conversations, document uploads (PDF/TXT), image uploads (PNG/JPG), and real-time chat context management.
 
-![Gemini Chatbot](./screenshot.png)
-
 ## 🌐 Live Demo
 
 [Click Here to Open Gemini Chatbot](https://gemini-chatbot-frontend-wp7k.onrender.com)
