@@ -3,9 +3,6 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
-/**
- * Gemini client
- */
 const getGeminiClient = () => {
   const apiKey = process.env.GEMINI_API_KEY;
 
@@ -18,17 +15,20 @@ const getGeminiClient = () => {
   return new GoogleGenerativeAI(apiKey);
 };
 
-/**
- * Trim very large documents
- */
-const trimDocumentText = (documentText) => {
+const trimDocumentText = (
+  documentText
+) => {
   if (!documentText) return "";
 
   const limit = Number(
-    process.env.DOCUMENT_TEXT_LIMIT || 12000
+    process.env.DOCUMENT_TEXT_LIMIT ||
+      12000
   );
 
-  if (!Number.isFinite(limit) || limit <= 0) {
+  if (
+    !Number.isFinite(limit) ||
+    limit <= 0
+  ) {
     return documentText;
   }
 
@@ -40,32 +40,32 @@ const trimDocumentText = (documentText) => {
     : documentText;
 };
 
-/**
- * Build optimized prompt
- */
 const buildPrompt = ({
   message,
   chatHistory,
   documentText,
   hasImage,
 }) => {
-  // Keep only recent messages
-  const recentHistory = chatHistory.slice(-10);
+  // Keep recent history only
+  const recentHistory =
+    chatHistory.slice(-10);
 
-  const historyText = recentHistory
-    .map(
-      (entry) =>
-        `${entry.role === "user"
-          ? "User"
-          : "Assistant"}: ${entry.content}`
-    )
-    .join("\n");
+  const historyText =
+    recentHistory
+      .map(
+        (entry) =>
+          `${entry.role === "user"
+            ? "User"
+            : "Assistant"}: ${entry.content}`
+      )
+      .join("\n");
 
   const docSection = documentText
     ? `\n\nDocument Context:\n${documentText}`
     : "";
 
-  const hasDocument = Boolean(documentText);
+  const hasDocument =
+    Boolean(documentText);
 
   const normalizedMessage =
     message.toLowerCase();
@@ -97,15 +97,19 @@ const buildPrompt = ({
     "results",
   ];
 
-  const asksVisual = visualKeywords.some(
-    (keyword) =>
-      normalizedMessage.includes(keyword)
-  );
+  const asksVisual =
+    visualKeywords.some((keyword) =>
+      normalizedMessage.includes(
+        keyword
+      )
+    );
 
-  const asksDoc = docKeywords.some(
-    (keyword) =>
-      normalizedMessage.includes(keyword)
-  );
+  const asksDoc =
+    docKeywords.some((keyword) =>
+      normalizedMessage.includes(
+        keyword
+      )
+    );
 
   let contextInstruction =
     "Answer normally.";
@@ -113,10 +117,16 @@ const buildPrompt = ({
   if (hasImage && !hasDocument) {
     contextInstruction =
       "Answer ONLY using the uploaded image.";
-  } else if (hasDocument && !hasImage) {
+  } else if (
+    hasDocument &&
+    !hasImage
+  ) {
     contextInstruction =
       "Answer ONLY using the uploaded document.";
-  } else if (hasDocument && hasImage) {
+  } else if (
+    hasDocument &&
+    hasImage
+  ) {
     contextInstruction = `You have BOTH a document and an image.
 
 - If the question is about diagram, figure, or visual → use IMAGE
@@ -127,7 +137,10 @@ const buildPrompt = ({
     if (asksVisual && !asksDoc) {
       contextInstruction +=
         "\n\nThe user intent is visual. Use IMAGE only.";
-    } else if (asksDoc && !asksVisual) {
+    } else if (
+      asksDoc &&
+      !asksVisual
+    ) {
       contextInstruction +=
         "\n\nThe user intent is document-based. Use DOCUMENT only.";
     }
@@ -141,7 +154,7 @@ const buildPrompt = ({
   const fallbackInstruction =
     "If the provided content does not contain the answer, respond exactly: The provided content does not contain this information.";
 
-  return `You are a precise AI assistant.
+  return `You are a precise assistant.
 
 Keep answers concise and grounded in provided context.
 
@@ -160,199 +173,164 @@ ${message}
 ${docSection}`;
 };
 
-/**
- * Delay helper
- */
-const sleep = (ms) =>
-  new Promise((resolve) =>
-    setTimeout(resolve, ms)
-  );
-
-/**
- * Generate Gemini response
- */
-const generateGeminiResponse = async ({
-  message,
-  chatHistory,
-  documentText,
-  image,
-}) => {
-  const client = getGeminiClient();
-
-  const MODELS = [
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
-  ];
-
-  const trimmedDocument =
-    trimDocumentText(documentText);
-
-  const prompt = buildPrompt({
+const generateGeminiResponse =
+  async ({
     message,
     chatHistory,
-    documentText: trimmedDocument,
-    hasImage: Boolean(image),
-  });
+    documentText,
+    image,
+  }) => {
+    const client =
+      getGeminiClient();
 
-  const parts = [{ text: prompt }];
+    const primaryModel =
+      process.env.GEMINI_MODEL ||
+      "gemini-2.0-flash-lite";
 
-  /**
-   * Add image if exists
-   */
-  if (image) {
-    parts.push({
-      inlineData: {
-        data: image.buffer.toString(
-          "base64"
-        ),
-        mimeType: image.mimetype,
-      },
-    });
-  }
+    const fallbackModel =
+      process.env
+        .GEMINI_FALLBACK_MODEL ||
+      "gemini-2.0-flash";
 
-  let lastError = null;
-
-  /**
-   * Try fallback models
-   */
-  for (const modelName of MODELS) {
-    try {
-      console.log(
-        `Using Gemini model: ${modelName}`
+    const trimmedDocument =
+      trimDocumentText(
+        documentText
       );
 
+    const prompt = buildPrompt({
+      message,
+      chatHistory,
+      documentText:
+        trimmedDocument,
+      hasImage: Boolean(image),
+    });
+
+    const parts = [
+      {
+        text: prompt,
+      },
+    ];
+
+    if (image) {
+      parts.push({
+        inlineData: {
+          data: image.buffer.toString(
+            "base64"
+          ),
+          mimeType:
+            image.mimetype,
+        },
+      });
+    }
+
+    const runModel = async (
+      modelName
+    ) => {
       const model =
         client.getGenerativeModel({
           model: modelName,
         });
 
-      /**
-       * Retry overloaded requests
-       */
-      for (
-        let retry = 0;
-        retry < 3;
-        retry++
+      const result =
+        await model.generateContent({
+          contents: [
+            {
+              role: "user",
+              parts,
+            },
+          ],
+        });
+
+      const response =
+        await result.response;
+
+      return response.text();
+    };
+
+    try {
+      return await runModel(
+        primaryModel
+      );
+    } catch (error) {
+      console.error(
+        "Primary Gemini Error:",
+        error.message
+      );
+
+      const messageText = String(
+        error?.message || ""
+      ).toLowerCase();
+
+      const retryable =
+        messageText.includes(
+          "503"
+        ) ||
+        messageText.includes(
+          "overloaded"
+        ) ||
+        messageText.includes(
+          "high demand"
+        );
+
+      if (
+        retryable &&
+        fallbackModel !==
+          primaryModel
       ) {
         try {
-          const result =
-            await model.generateContent({
-              contents: [
-                {
-                  role: "user",
-                  parts,
-                },
-              ],
-            });
-
-          const response =
-            await result.response;
-
-          return response.text();
-        } catch (error) {
-          lastError = error;
-
+          return await runModel(
+            fallbackModel
+          );
+        } catch (fallbackError) {
           console.error(
-            `Retry ${retry + 1} failed for ${modelName}:`,
-            error.message
+            "Fallback Gemini Error:",
+            fallbackError.message
           );
 
-          const retryable =
-            error.message.includes(
-              "503"
-            ) ||
-            error.message.includes(
-              "429"
-            ) ||
-            error.message.includes(
-              "overloaded"
-            ) ||
-            error.message.includes(
-              "high demand"
-            );
-
-          if (
-            retryable &&
-            retry < 2
-          ) {
-            await sleep(
-              2000 * (retry + 1)
-            );
-
-            continue;
-          }
-
-          break;
+          throw new Error(
+            "Gemini servers are busy. Please try again in a few seconds."
+          );
         }
       }
-    } catch (error) {
-      lastError = error;
+
+      if (
+        messageText.includes("429")
+      ) {
+        throw new Error(
+          "AI quota exceeded. Please try again later."
+        );
+      }
+
+      throw new Error(
+        error?.message ||
+          "Gemini failed to respond."
+      );
     }
-  }
+  };
 
-  throw new Error(
-    lastError?.message ||
-      "Gemini failed to respond."
-  );
-};
-
-/**
- * Main exported function
- */
 export async function sendMessageToGemini(
   userMessage,
   conversationHistory = [],
   documentContent = null,
   imageData = null
 ) {
-  try {
-    return await generateGeminiResponse({
-      message: userMessage,
-      chatHistory: conversationHistory,
-      documentText: documentContent,
-      image: imageData,
-    });
-  } catch (error) {
-    console.error(
-      "Gemini API Error:",
-      error.message,
-      error.stack
-    );
-
-    if (
-      error.message.includes("429")
-    ) {
-      throw new Error(
-        "AI quota exceeded. Please try again later."
-      );
-    }
-
-    if (
-      error.message.includes("503")
-    ) {
-      throw new Error(
-        "Gemini servers are busy right now. Please retry in a few seconds."
-      );
-    }
-
-    throw new Error(
-      "Failed to generate AI response."
-    );
-  }
+  return generateGeminiResponse({
+    message: userMessage,
+    chatHistory:
+      conversationHistory,
+    documentText:
+      documentContent,
+    image: imageData,
+  });
 }
 
-/**
- * Simple text-only chat
- */
 export async function sendSimpleMessage(
   userMessage,
   conversationHistory = []
 ) {
   return sendMessageToGemini(
     userMessage,
-    conversationHistory,
-    null,
-    null
+    conversationHistory
   );
 }
 
